@@ -3,7 +3,7 @@ use std::{convert::TryFrom, time::Instant};
 use std::iter::Iterator;
 use log::warn;
 
-const BUFSIZE: usize = 5;
+const BUFSIZE: usize = 100;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Ping {
@@ -21,7 +21,8 @@ pub struct RingBuffer {
 
 pub struct RingBufferIter<'a> {
     buf: &'a RingBuffer,
-    index: usize
+    index: usize,
+    reverse: bool
 }
 
 impl RingBuffer {
@@ -80,13 +81,18 @@ impl RingBuffer {
     }
 
     pub fn iter(&self) -> RingBufferIter<'_> {
-        return self.iter_from(self.start_index);
+        RingBufferIter {
+            buf: self,
+            index: self.start_index,
+            reverse: false
+        }
     }
 
-    pub fn iter_from(&self, index: usize) -> RingBufferIter<'_> {
-        return RingBufferIter {
+    pub fn iter_rev(&self) -> RingBufferIter<'_> {
+        RingBufferIter {
             buf: self,
-            index
+            index: self.start_index + self.len,
+            reverse: true
         }
     }
 }
@@ -122,11 +128,15 @@ impl Iterator for RingBufferIter<'_> {
     type Item = Ping;
     
     fn next(&mut self) -> Option<<Self as Iterator>::Item> {
-        if self.index < self.buf.start_index + self.buf.len {
+        let mut ret = None;
+        if !self.reverse && !self.reverse && self.index < self.buf.start_index + self.buf.len {
+            ret = Some(self.buf[self.index]);
             self.index += 1;
-            Some(self.buf[self.index - 1])
-        } else {
-            None
+        } else if self.reverse && self.index > self.buf.start_index {
+            ret = Some(self.buf[self.index - 1]);
+            self.index -= 1;
         }
+
+        ret
     }
 }
