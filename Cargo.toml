@@ -3,12 +3,24 @@ name = "latgraph"
 version = "0.1.0"
 authors = ["Compilin <git@compilin.dev>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+default-run = "latgraph"
 
 [dependencies]
+clap = { version = "2.33.3", optional = true }
+conrod_core = "0.71.0"
+conrod_glium = "0.71.0"
+conrod_winit = "0.71.0"
 env_logger = "0.8.3"
-iced = { version = "0.2.0", features = ["canvas", "tokio"] }
-iced_futures = "0.2.0"
-iced_native = "0.3.0"
+glium = "0.28.0"
 log = { version = "0.4.14" }
+rand = { version = "0.8.3", optional = true }
+rand_distr = { version = "0.4.0", optional = true }
+tokio = { version = "1.4.0", optional = true, features = ["rt", "net", "time", "macros"] }
+winit = "0.23"
+
+[features]
+test-server = ["clap", "rand", "rand_distr", "tokio"]
+
+[[bin]]
+name = "test-echo-server"
+required-features = ["test-server"]
