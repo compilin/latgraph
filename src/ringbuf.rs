@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::{cmp::min, convert::TryFrom, iter::Iterator, time::Instant};
 
-use log::warn;
+use log::{warn,debug};
 
 #[derive(Copy, Clone, Debug)]
 pub enum Ping {
@@ -62,9 +62,11 @@ impl RingBuffer {
         } else if id_usize >= self.start_index {
             match self.data[id_usize % self.capacity] {
                 Ping::Sent(snd_time) => {
+                    let lat = rcv_time.saturating_duration_since(snd_time).as_millis();
+                    debug!("Received pong, latency: {}", lat);
                     self.data[id_usize % self.capacity] = Ping::Received(
                         snd_time,
-                        rcv_time.saturating_duration_since(snd_time).as_millis(),
+                        lat,
                     );
                 }
                 Ping::Received(_, _) => {
@@ -172,5 +174,14 @@ impl Iterator for RingBufferIter<'_, (usize, Ping)> {
             };
 
         index.map(|i| (i, self.buf[i]))
+    }
+}
+
+impl Ping {
+    pub fn sent_time(&self) -> Instant {
+        match self {
+            Ping::Sent(time) => *time,
+            Ping::Received(time, _) => *time
+        }
     }
 }

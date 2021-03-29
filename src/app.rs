@@ -36,7 +36,6 @@ pub struct LatGraphApp {
 pub struct LatGraphSettings {
     pub running: bool,
     pub remote_host: String,
-    pub remote_port: u16,
     pub delay: Duration,
 }
 
@@ -92,7 +91,7 @@ impl LatGraphApp {
         thread::spawn(move || {
             let event_tx = event_tx_snd;
             let mut settings = LatGraphSettings::default();
-            let mut prev_remote = (String::new(), 7u16);
+            let mut prev_remote = String::new();
             let mut new_settings = false;
             let mut next_ping = Instant::now();
             let mut ping_id = 0u64;
@@ -132,12 +131,15 @@ impl LatGraphApp {
                 if new_settings {
                     debug!("SND: Received new settings {:#?}", settings);
                     new_settings = false;
-                    let new_remote = (settings.remote_host.clone(), settings.remote_port);
 
                     // If remote host settings have changed
-                    if prev_remote != new_remote && !new_remote.0.is_empty() {
+                    if prev_remote != settings.remote_host && !settings.remote_host.is_empty() {
                         info!("SND: Connecting to new host");
-                        if let Err(e) = socket_tx.connect(&new_remote) {
+                        let mut addr = settings.remote_host.clone();
+                        if !addr.contains(":") {
+                            addr += ":7";
+                        }
+                        if let Err(e) = socket_tx.connect(addr) {
                             error!("SND: Couldn't connect to host ({})", e);
                             if let Err(_) =
                                 event_tx.send_event(AppEvent::Error(AppError::HostResolution))
@@ -146,7 +148,7 @@ impl LatGraphApp {
                             }
                             settings.running = false;
                         }
-                        prev_remote = new_remote;
+                        prev_remote = settings.remote_host.clone();
                     }
                 }
             }
@@ -175,8 +177,8 @@ impl LatGraphApp {
     }
 
     fn init_ui(settings_tx: mpsc::Sender<LatGraphSettings>) -> (LatGraphApp, EventLoop<AppEvent>) {
-        const WIDTH: u32 = 400;
-        const HEIGHT: u32 = 200;
+        const WIDTH: u32 = 800;
+        const HEIGHT: u32 = 400;
 
         let event_loop = EventLoop::with_user_event();
         let window = WindowBuilder::new()
@@ -220,12 +222,12 @@ impl LatGraphApp {
             .color(color::DARK_CHARCOAL)
             .set(ids.canvas, ui);
 
-        LatencyGraphWidget::new(&mut self.ringbuf)
+        LatencyGraphWidget::new(&self.ringbuf, self.settings.delay, 8)
             .color(color::LIGHT_BLUE)
-            .line_thickness(2.0)
-            .point_thickness(4.0)
-            .wh_of(ids.canvas)
-            .bottom_left_of(ids.canvas)
+            .line_thickness(1.5)
+            .point_thickness(3.)
+            .wh([400., 200.])
+            .xy([0., 0.])
             .set(ids.graph, ui);
 
         *needs_redraw = ui.has_changed();
@@ -381,7 +383,6 @@ impl Default for LatGraphSettings {
     fn default() -> Self {
         LatGraphSettings {
             remote_host: String::new(),
-            remote_port: 7,
             delay: Duration::from_millis(100),
             running: false,
         }

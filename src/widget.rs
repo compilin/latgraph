@@ -1,10 +1,11 @@
 use crate::ringbuf::{Ping, RingBuffer};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use conrod_core::{
     builder_method,
-    color::{Color, RED},
-    widget, widget_ids, Colorable, Widget, WidgetCommon, WidgetStyle,
+    color::{rgba_bytes, Color, RED},
+    widget, widget_ids, Colorable, Point, Positionable, Rect, Sizeable, Widget, WidgetCommon,
+    WidgetStyle,
 };
 use log::*;
 
@@ -12,17 +13,23 @@ use log::*;
 pub struct LatencyGraphWidget<'a> {
     #[conrod(common_builder)]
     common: widget::CommonBuilder,
-    buffer: &'a mut RingBuffer,
+    buffer: &'a RingBuffer,
+    delay: Duration,
+    zoom: u16,
     style: Style,
 }
 
 widget_ids!(
     struct Ids {
+        border,
+        ticks[],
         paths[],
         rects[],
-        points[]
+        points[],
     }
 );
+
+const ZOOM_BASE: f64 = 1.2;
 
 pub struct State {
     ids: Ids,
@@ -41,10 +48,12 @@ pub struct Style {
 }
 
 impl<'a> LatencyGraphWidget<'a> {
-    pub fn new(buffer: &'a mut RingBuffer) -> Self {
+    pub fn new(buffer: &'a RingBuffer, delay: Duration, zoom: u16) -> Self {
         Self {
             common: widget::CommonBuilder::default(),
             buffer,
+            delay,
+            zoom,
             style: Style::default(),
         }
     }
@@ -75,7 +84,6 @@ impl Widget for LatencyGraphWidget<'_> {
     }
 
     fn update(self, args: widget::UpdateArgs<'_, '_, '_, '_, Self>) {
-        use conrod_core::{Positionable, Sizeable};
         let widget::UpdateArgs {
             id,
             rect,
@@ -83,96 +91,148 @@ impl Widget for LatencyGraphWidget<'_> {
             ui,
             ..
         } = args;
-        let now = Instant::now();
 
-        let mut first_point = None;
-        let mut last_point = None;
-        let mut points = Vec::new();
+        enum Current {
+            // What we're currently drawing
+            Segment(Vec<Point>),
+            Missing(f64, f64),
+        }
+        use Current::*;
+
+        let x_step = f64::powf(ZOOM_BASE, self.zoom as f64);
+        let x_offset = if self.buffer.len() > 0 {
+            x_step
+                * self.buffer[self.buffer.len() - 1]
+                    .sent_time()
+                    .elapsed()
+                    .as_micros() as f64
+                / self.delay.as_micros() as f64
+        } else {
+            0.
+        };
+
+        let mut current = Segment(Vec::new());
         let mut segments = Vec::new();
-        let mut segment = Vec::new();
-        for (i, ping) in self.buffer.iter_rev().with_index() {
-            let (time, lat) = match ping {
-                Ping::Sent(time) => (time, None),
-                Ping::Received(time, lat) => (time, Some(lat)),
-            };
-            let x = rect.right() - now.saturating_duration_since(time).as_millis() as f64 / 100.0; // TODO implement variable zoom
-            let break_after = x < rect.left();
-            // let x = utils::clamp(x, rect.left(), rect.right());
+        let mut points = Vec::with_capacity(usize::min(self.buffer.len(), (rect.w() / x_step) as usize + 1));
+        let mut missing_rects = Vec::new();
+        for (i, ping) in self.buffer.iter_rev().enumerate() {
+            let x = rect.right() - (i as f64 * x_step + x_offset);
 
-            match lat {
-                Some(lat) => {
+            current = match ping {
+                Ping::Received(_, lat) => {
                     let y = rect.bottom() + lat as f64;
-                    // let y = utils::clamp(rect.bottom() + lat as f64, rect.bottom(), rect.top());
-                    points.push((i, [x, y]));
-                    segment.push((i, [x, y]));
-                    if first_point.is_none() {
-                        first_point = Some([x, y]);
-                    } else {
-                        last_point = Some([x, y]);
+                    points.push([x, y]);
+                    match &mut current {
+                        Segment(pts) => {
+                            pts.push([x, y]);
+                            current
+                        }
+                        Missing(from, to) => {
+                            if self.delay * (i as u32) > Duration::from_secs(1) { // Only consider packets lost after 1s
+                                missing_rects.push([*from, *to]);
+                            }
+                            Segment(vec![[x, y]])
+                        }
                     }
                 }
-                None => {
-                    // Packet sent but not received
-                    if !segment.is_empty() {
-                        segments.push(segment);
-                        segment = Vec::new();
+                Ping::Sent(_) => match current {
+                    Segment(pts) => {
+                        if pts.len() > 1 {
+                            segments.push(pts);
+                        }
+                        Missing(x, x)
                     }
-                }
-            }
-            if break_after {
+                    Missing(_, to) => Missing(x, to),
+                },
+            };
+            if x < rect.left() {
                 // Add the first point that is outside the rectangle to complete the line, then break
                 break;
             }
         }
-        if !segment.is_empty() {
-            segments.push(segment);
-        }
-        if segments.len() > state.ids.paths.len() {
-            let mut id_gen = ui.widget_id_generator();
-            state.update(|state| state.ids.paths.resize(segments.len(), &mut id_gen));
-        }
-        if points.len() > state.ids.points.len() {
-            let mut id_gen = ui.widget_id_generator();
-            state.update(|state| state.ids.points.resize(points.len(), &mut id_gen));
-        }
-
-        if log_enabled!(Level::Debug) {
-            trace!(
-                "Updating ringbuf widget with {} points in {} segments. First and last points: {:?} / {:?}",
-                points.len(),
-                segments.len(),
-                first_point,
-                last_point
-            );
-        }
-
-        let segments = segments // Assign widget IDs to segments
-            .iter()
-            .enumerate()
-            .map(|(i, segment)| (state.ids.paths[i], segment))
-            .collect::<Vec<_>>();
-
-        let thickness = self.style.line_thickness(ui.theme());
-        let color = self.style.color(ui.theme());
-        for (subid, segment) in segments.iter() {
-            if segment.len() > 1 {
-                widget::PointPath::new(segment.iter().map(|p| p.1))
-                    .wh(rect.dim())
-                    .xy(rect.xy())
-                    .color(color)
-                    .thickness(thickness)
-                    .parent(id)
-                    .graphics_for(id)
-                    .set(*subid, ui);
+        match current {
+            Segment(pts) => {
+                if !pts.is_empty() {
+                    segments.push(pts);
+                }
+            }
+            Missing(from, to) => {
+                missing_rects.push([from, to]);
             }
         }
 
+        trace!(
+            "Updating ringbuf over area {:?} widget with {} points in {} segments with {} missing rects. First rect: {:?}",
+            rect,
+            points.len(),
+            segments.len(),
+            missing_rects.len(),
+            missing_rects.first(),
+        );
+        {
+            let mut id_gen = ui.widget_id_generator();
+            // Make sure each list of ids we have has enough for the corresponding list of widgets
+            macro_rules! gen_ids {
+                ($list:ident, $id_list:ident) => {
+                    if $list.len() > state.ids.$id_list.len() {
+                        state.update(|state| state.ids.$id_list.resize($list.len(), &mut id_gen));
+                    }
+                };
+            }
+            gen_ids!(segments, paths);
+            gen_ids!(missing_rects, rects);
+            gen_ids!(points, points);
+        }
+
+        /* WIDGET BORDER */
+        let color = self.style.color(ui.theme());
+        widget::Rectangle::outline(rect.dim())
+            .xy(rect.xy())
+            .color(color)
+            .parent(id)
+            .graphics_for(id)
+            .set(state.ids.border, ui);
+
+        /* SEGMENTS */
+        let color = color.alpha(0.5);
+        let thickness = self.style.line_thickness(ui.theme());
+        for (i, segment) in segments.into_iter().enumerate() {
+            widget::PointPath::new(segment)
+                .wh(rect.dim())
+                .xy(rect.xy())
+                .color(color)
+                .thickness(thickness)
+                .parent(id)
+                .graphics_for(id)
+                .set(state.ids.paths[i], ui);
+        }
+
+        /* LOST DATAGRAM BACKGROUND */
+        let color = rgba_bytes(192, 64, 32, 0.3);
+        for (i, [from, to]) in missing_rects.into_iter().enumerate() {
+            let rect = Rect::from_corners(
+                [from - x_step / 2., rect.bottom()],
+                [to + x_step / 2., rect.top()],
+            );
+
+            widget::Rectangle::fill(rect.dim())
+                .xy(rect.xy())
+                .color(color)
+                .parent(id)
+                .graphics_for(id)
+                .set(state.ids.rects[i], ui);
+        }
+
+        /* PING POINTS */
+        let color = self.style.color(ui.theme());
         let radius = self.style.point_thickness(ui.theme()) / 2.;
-        for (id, (_, point)) in points.iter().enumerate() {
-            widget::primitive::shape::circle::Circle::fill(radius)
+        for (i, point) in points.iter().enumerate() {
+            widget::Circle::fill(radius)
                 .xy(*point)
-                .color(RED)
-                .set(state.ids.points[id], ui);
+                .color(color)
+                .parent(id)
+                .graphics_for(id)
+                .set(state.ids.points[i], ui);
         }
     }
 }
