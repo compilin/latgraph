@@ -226,8 +226,8 @@ impl LatGraphApp {
             .color(color::LIGHT_BLUE)
             .line_thickness(1.5)
             .point_thickness(3.)
-            .wh([400., 200.])
-            .xy([0., 0.])
+            .wh_of(ids.canvas)
+            .middle_of(ids.canvas)
             .set(ids.graph, ui);
 
         *needs_redraw = ui.has_changed();
