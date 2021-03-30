@@ -1,10 +1,10 @@
 use crate::ringbuf::{Ping, RingBuffer};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use conrod_core::{
     builder_method,
-    color::{rgba_bytes, Color, RED},
-    widget, widget_ids, Colorable, Point, Positionable, Rect, Sizeable, Widget, WidgetCommon,
+    color::{rgba_bytes, Color},
+    widget, widget_ids, Colorable, Positionable, Rect, Widget, WidgetCommon,
     WidgetStyle,
 };
 use log::*;
@@ -35,14 +35,10 @@ pub struct State {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, WidgetStyle)]
 pub struct Style {
-    #[conrod(default = "theme.shape_color")]
+    #[conrod(default = "theme.border_color")]
     pub color: Option<Color>,
-
-    #[conrod(default = "1.0")]
-    pub line_thickness: Option<f64>,
-
-    #[conrod(default = "2.0")]
-    pub point_thickness: Option<f64>,
+    #[conrod(default = "theme.shape_color")]
+    pub missing_color: Option<Color>,
 }
 
 impl<'a> LatencyGraphWidget<'a> {
@@ -56,15 +52,7 @@ impl<'a> LatencyGraphWidget<'a> {
         }
     }
 
-    pub fn line_thickness(mut self, thickness: f64) -> Self {
-        self.style.line_thickness = Some(thickness);
-        self
-    }
-
-    pub fn point_thickness(mut self, thickness: f64) -> Self {
-        self.style.point_thickness = Some(thickness);
-        self
-    }
+    builder_method!(pub missing_color { style.missing_color = Some(Color) });
 }
 
 impl Widget for LatencyGraphWidget<'_> {

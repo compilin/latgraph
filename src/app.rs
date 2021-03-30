@@ -12,7 +12,10 @@ use glium::{
     self,
     glutin::{
         dpi::LogicalSize,
-        event::{ElementState, Event, KeyboardInput, StartCause, VirtualKeyCode, WindowEvent},
+        event::{
+            ElementState, Event, KeyboardInput, MouseScrollDelta, StartCause, VirtualKeyCode,
+            WindowEvent,
+        },
         event_loop::{ControlFlow, EventLoop, EventLoopProxy},
         window::WindowBuilder,
         ContextBuilder,
@@ -20,6 +23,8 @@ use glium::{
     Display, Surface, Texture2d,
 };
 use log::*;
+
+const MAX_ZOOM: f64 = 20.;
 
 pub struct LatGraphApp {
     ringbuf: RingBuffer,
@@ -37,6 +42,7 @@ pub struct LatGraphSettings {
     pub running: bool,
     pub remote_host: String,
     pub delay: Duration,
+    pub zoom: u16,
 }
 
 widget_ids! {
@@ -222,10 +228,9 @@ impl LatGraphApp {
             .color(color::DARK_CHARCOAL)
             .set(ids.canvas, ui);
 
-        LatencyGraphWidget::new(&self.ringbuf, self.settings.delay, 8)
+        LatencyGraphWidget::new(&self.ringbuf, self.settings.delay, self.settings.zoom)
             .color(color::LIGHT_BLUE)
-            .line_thickness(1.5)
-            .point_thickness(3.)
+            .missing_color(color::rgba_bytes(192, 64, 32, 0.3))
             .wh_of(ids.canvas)
             .middle_of(ids.canvas)
             .set(ids.graph, ui);
@@ -274,6 +279,17 @@ impl LatGraphApp {
                     ..
                 } => {
                     self.toggle_running();
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    let d_v = match delta {
+                        MouseScrollDelta::LineDelta(_, v) => *v as f64,
+                        MouseScrollDelta::PixelDelta(pos) => pos.x,
+                    };
+                    if d_v != 0. {
+                        let zoom = self.settings.zoom as f64 + f64::signum(d_v);
+                        self.settings.zoom = zoom.clamp(0., MAX_ZOOM) as u16;
+                    }
+                    info!("Got MouseWheel event, delta = {} ({:?}). Zoom: {}", d_v, delta, self.settings.zoom);
                 }
                 _ => {}
             },
@@ -385,6 +401,7 @@ impl Default for LatGraphSettings {
             remote_host: String::new(),
             delay: Duration::from_millis(100),
             running: false,
+            zoom: 8,
         }
     }
 }
