@@ -1,6 +1,9 @@
-use crate::ringbuf::{Ping, RingBuffer};
+use crate::{
+    app::LatGraphSettings,
+    ringbuf::{Ping, RingBuffer},
+};
 use conrod_core::Borderable;
-use std::time::{Duration,Instant};
+use std::time::{Duration, Instant};
 
 use conrod_core::{
     builder_method,
@@ -14,8 +17,7 @@ pub struct LatencyGraphWidget<'a> {
     #[conrod(common_builder)]
     common: widget::CommonBuilder,
     buffer: &'a RingBuffer,
-    delay: Duration,
-    zoom: Zoom,
+    settings: &'a LatGraphSettings,
     style: Style,
 }
 
@@ -55,12 +57,11 @@ pub struct Style {
 }
 
 impl<'a> LatencyGraphWidget<'a> {
-    pub fn new(buffer: &'a RingBuffer, delay: Duration, zoom: Zoom) -> Self {
+    pub fn new(buffer: &'a RingBuffer, settings: &'a LatGraphSettings) -> Self {
         Self {
             common: widget::CommonBuilder::default(),
             buffer,
-            delay,
-            zoom,
+            settings,
             style: Style::default(),
         }
     }
@@ -85,15 +86,15 @@ impl Widget for LatencyGraphWidget<'_> {
     fn update(self, args: widget::UpdateArgs<'_, '_, '_, '_, Self>) -> Zoom {
         let widget::UpdateArgs {
             id,
-            rect,
+            rect: widget_area,
             state,
             ui,
             ..
         } = args;
 
-        let mut zoom = self.zoom;
+        let mut zoom = self.settings.zoom;
         {
-            let mut horizontal = self.zoom.horizontal as f64;
+            let mut horizontal = zoom.horizontal as f64;
             for scroll in ui.widget_input(id).scrolls() {
                 if scroll.y != 0. {
                     horizontal += f64::signum(scroll.y);
@@ -102,12 +103,14 @@ impl Widget for LatencyGraphWidget<'_> {
             zoom.horizontal = horizontal.clamp(0., ZOOM_MAX) as u16;
         }
 
+        let graph_area = widget_area.pad_right(50.).pad_bottom(50.);
+
         /* WIDGET BORDER */
         widget::Rectangle::outline_styled(
-            rect.dim(),
+            graph_area.dim(),
             widget::line::Style::solid().thickness(self.style.border(ui.theme())),
         )
-        .xy(rect.xy())
+        .xy(graph_area.xy())
         .color(self.style.border_color(ui.theme()))
         .parent(id)
         .graphics_for(id)
@@ -119,64 +122,69 @@ impl Widget for LatencyGraphWidget<'_> {
         let bar_width = f64::powf(ZOOM_BASE, zoom.horizontal as f64);
         let now = Instant::now();
         let x_step = bar_width + 1.;
-        let x_offset = if self.buffer.len() > 0 { // Offset as a function of time since the last packet was sent
-            bar_width
-                * now.saturating_duration_since(self.buffer[self.buffer.len() - 1].sent_time())
-                    .as_micros() as f64
-                / self.delay.as_micros() as f64
+        let x_offset = if self.buffer.len() > 0 && self.settings.running {
+            // Offset as a function of time since the last packet was sent
+            now
+                .saturating_duration_since(self.buffer[self.buffer.len() - 1].sent_time())
+                .as_micros() as f64
+                / self.settings.delay.as_micros() as f64
+            
         } else {
-            0.
+            1.
         };
-        let nb_points = usize::min(self.buffer.len(), (rect.w() / x_step) as usize + 2);
+        let x_offset = bar_width * x_offset.clamp(0., 1.);
+        let nb_points = usize::min(self.buffer.len(), (graph_area.w() / x_step) as usize + 2);
 
         if state.ids.bars.len() < nb_points {
             let mut id_gen = ui.widget_id_generator();
             state.update(|state| state.ids.bars.resize(nb_points, &mut id_gen));
         }
         for (i, ping) in self.buffer.iter_rev().take(nb_points).enumerate() {
-            let x = rect.right() - (i as f64 * x_step + x_offset);
+            let x = graph_area.right() - (i as f64 * x_step + x_offset);
 
             match ping {
                 Ping::Received(_, lat) => {
-                    let y = rect.bottom() + lat as f64;
-                    let rct = Rect::from_corners(
-                        [x, rect.bottom()],
-                        [x + bar_width, y],
-                    );
-                    widget::Rectangle::fill(rct.dim())
-                        .xy(rct.xy())
-                        .color(bar_color)
-                        .parent(id)
-                        .graphics_for(id)
-                        .set(state.ids.bars[i], ui);
+                    let y = graph_area.bottom() + lat as f64;
+                    if let Some(rct) =
+                        Rect::from_corners([x, graph_area.bottom()], [x + bar_width, y])
+                            .overlap(graph_area)
+                    {
+                        widget::Rectangle::fill(rct.dim())
+                            .xy(rct.xy())
+                            .color(bar_color)
+                            .parent(id)
+                            .graphics_for(id)
+                            .set(state.ids.bars[i], ui);
+                    }
                 }
                 Ping::Sent(time) => {
-                    let rct = Rect::from_corners(
-                        [x, rect.bottom()],
-                        [x + bar_width, rect.top()],
-                    );
-                    let age = now.saturating_duration_since(time);
-                    let alpha = (age.as_millis() as f32 - 1000.) / 1000.;
-                    let alpha = alpha.clamp(0., 1.);
-                    widget::Rectangle::fill(rct.dim())
-                        .xy(rct.xy())
-                        .color(missing_color.clone().alpha(alpha))
-                        .parent(id)
-                        .graphics_for(id)
-                        .set(state.ids.bars[i], ui);
+                    if let Some(rct) = Rect::from_corners(
+                        [x, graph_area.bottom()],
+                        [x + bar_width, graph_area.top()],
+                    )
+                    .overlap(graph_area)
+                    {
+                        let age = now.saturating_duration_since(time);
+                        let alpha = (age.as_millis() as f32 - 1000.) / 1000.;
+                        let alpha = alpha.clamp(0., 1.);
+                        widget::Rectangle::fill(rct.dim())
+                            .xy(rct.xy())
+                            .color(missing_color.clone().alpha(alpha))
+                            .parent(id)
+                            .graphics_for(id)
+                            .set(state.ids.bars[i], ui);
+                    }
                 }
             };
-            if x < rect.left() {
+            if x < graph_area.left() {
                 // Add the first point that is outside the rectangle to complete the line, then break
                 break;
             }
         }
 
-
-
         trace!(
             "Updating ringbuf over area {:?} widget with {} points, zoom: {:?}",
-            rect,
+            graph_area,
             nb_points,
             zoom,
         );

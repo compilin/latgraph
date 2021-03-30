@@ -217,7 +217,7 @@ impl LatGraphApp {
     }
 
     fn set_ui(&mut self, needs_redraw: &mut bool) {
-        use conrod_core::{color, widget, Colorable, Positionable, Sizeable, Widget};
+        use conrod_core::{color, widget, Borderable, Colorable, Positionable, Sizeable, Widget};
 
         let ui = &mut self.ui.set_widgets();
         let ids = &self.widget_ids;
@@ -226,9 +226,10 @@ impl LatGraphApp {
             .color(color::DARK_CHARCOAL)
             .set(ids.canvas, ui);
 
-        self.settings.zoom = LatencyGraphWidget::new(&self.ringbuf, self.settings.delay, self.settings.zoom)
+        self.settings.zoom = LatencyGraphWidget::new(&self.ringbuf, &self.settings)
             .color(color::LIGHT_BLUE)
             .missing_color(color::rgba_bytes(192, 64, 32, 0.3))
+            .border_color(color::LIGHT_BLUE)
             .wh_of(ids.canvas)
             .middle_of(ids.canvas)
             .set(ids.graph, ui);
