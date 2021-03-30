@@ -1,6 +1,6 @@
 use crate::ringbuf::{Ping, RingBuffer};
 use conrod_core::Borderable;
-use std::time::Duration;
+use std::time::{Duration,Instant};
 
 use conrod_core::{
     builder_method,
@@ -116,20 +116,19 @@ impl Widget for LatencyGraphWidget<'_> {
         /* PING BARS */
         let bar_color = self.style.color(ui.theme()).alpha(0.5);
         let missing_color = rgba_bytes(192, 64, 32, 0.3);
-
         let bar_width = f64::powf(ZOOM_BASE, zoom.horizontal as f64);
+        let now = Instant::now();
         let x_step = bar_width + 1.;
-        let x_offset = if self.buffer.len() > 0 {
+        let x_offset = if self.buffer.len() > 0 { // Offset as a function of time since the last packet was sent
             bar_width
-                * self.buffer[self.buffer.len() - 1]
-                    .sent_time()
-                    .elapsed()
+                * now.saturating_duration_since(self.buffer[self.buffer.len() - 1].sent_time())
                     .as_micros() as f64
                 / self.delay.as_micros() as f64
         } else {
             0.
         };
-        let nb_points = usize::min(self.buffer.len(), (rect.w() / x_step) as usize + 1);
+        let nb_points = usize::min(self.buffer.len(), (rect.w() / x_step) as usize + 2);
+
         if state.ids.bars.len() < nb_points {
             let mut id_gen = ui.widget_id_generator();
             state.update(|state| state.ids.bars.resize(nb_points, &mut id_gen));
@@ -151,20 +150,20 @@ impl Widget for LatencyGraphWidget<'_> {
                         .graphics_for(id)
                         .set(state.ids.bars[i], ui);
                 }
-                Ping::Sent(_) => {
+                Ping::Sent(time) => {
                     let rct = Rect::from_corners(
                         [x, rect.bottom()],
                         [x + bar_width, rect.top()],
                     );
-                    if self.delay * (i as u32) > Duration::from_secs(1) {
-                        // Only consider packets lost after 1s
-                        widget::Rectangle::fill(rct.dim())
-                            .xy(rct.xy())
-                            .color(missing_color)
-                            .parent(id)
-                            .graphics_for(id)
-                            .set(state.ids.bars[i], ui);
-                    }
+                    let age = now.saturating_duration_since(time);
+                    let alpha = (age.as_millis() as f32 - 1000.) / 1000.;
+                    let alpha = alpha.clamp(0., 1.);
+                    widget::Rectangle::fill(rct.dim())
+                        .xy(rct.xy())
+                        .color(missing_color.clone().alpha(alpha))
+                        .parent(id)
+                        .graphics_for(id)
+                        .set(state.ids.bars[i], ui);
                 }
             };
             if x < rect.left() {
@@ -172,6 +171,8 @@ impl Widget for LatencyGraphWidget<'_> {
                 break;
             }
         }
+
+
 
         trace!(
             "Updating ringbuf over area {:?} widget with {} points, zoom: {:?}",
