@@ -34,7 +34,7 @@ fn main() {
         remote_host: String::from(remote),
         delay: Duration::from_millis(rate),
         running: running,
-        zoom: 8,
+        zoom: Default::default(),
     };
     info!("Starting app with settings {:?}", settings);
 
