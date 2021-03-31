@@ -19,6 +19,7 @@ pub struct LatencyGraphWidget<'a> {
     buffer: &'a RingBuffer,
     settings: &'a LatGraphSettings,
     style: Style,
+    is_mouse_over_window: bool,
 }
 
 widget_ids!(
@@ -57,12 +58,17 @@ pub struct Style {
 }
 
 impl<'a> LatencyGraphWidget<'a> {
-    pub fn new(buffer: &'a RingBuffer, settings: &'a LatGraphSettings) -> Self {
+    pub fn new(
+        buffer: &'a RingBuffer,
+        settings: &'a LatGraphSettings,
+        is_mouse_over_window: bool,
+    ) -> Self {
         Self {
             common: widget::CommonBuilder::default(),
             buffer,
             settings,
             style: Style::default(),
+            is_mouse_over_window,
         }
     }
 

@@ -34,6 +34,7 @@ pub struct LatGraphApp {
     widget_ids: Ids,
     image_map: Map<Texture2d>,
     renderer: Renderer,
+    is_mouse_over_window: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -214,6 +215,7 @@ impl LatGraphApp {
                 widget_ids,
                 image_map,
                 renderer,
+                is_mouse_over_window: false,
             },
             event_loop,
         )
@@ -229,7 +231,7 @@ impl LatGraphApp {
             .color(color::DARK_CHARCOAL)
             .set(ids.canvas, ui);
 
-        self.settings.zoom = LatencyGraphWidget::new(&self.ringbuf, &self.settings)
+        self.settings.zoom = LatencyGraphWidget::new(&self.ringbuf, &self.settings, self.is_mouse_over_window)
             .color(color::LIGHT_BLUE)
             .missing_color(color::rgba_bytes(192, 64, 32, 0.3))
             .border_color(color::LIGHT_BLUE)
@@ -281,6 +283,12 @@ impl LatGraphApp {
                     ..
                 } => {
                     self.toggle_running();
+                }
+                WindowEvent::CursorLeft { .. } => {
+                    self.is_mouse_over_window = false;
+                }
+                WindowEvent::CursorEntered { .. } => {
+                    self.is_mouse_over_window = true;
                 }
                 _ => {}
             },
