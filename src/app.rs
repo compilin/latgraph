@@ -1,3 +1,4 @@
+use conrod_core::text::Font;
 use crate::{ringbuf::RingBuffer, widget::LatencyGraphWidget};
 use conrod_glium::Renderer;
 use std::{
@@ -183,6 +184,7 @@ impl LatGraphApp {
     fn init_ui(settings_tx: mpsc::Sender<LatGraphSettings>) -> (LatGraphApp, EventLoop<AppEvent>) {
         const WIDTH: u32 = 800;
         const HEIGHT: u32 = 400;
+        let font_data = include_bytes!("resources/WorkSans-Regular.ttf");
 
         let event_loop = EventLoop::with_user_event();
         let window = WindowBuilder::new()
@@ -193,9 +195,10 @@ impl LatGraphApp {
             Display::new(window, context, &event_loop).expect("Couldn't instanciate display");
 
         let mut ui = UiBuilder::new([WIDTH as f64, HEIGHT as f64]).build();
-        ui.fonts
-            .insert_from_file("C:\\Windows\\Fonts\\LatoWeb-Regular.ttf")
+        let font = Font::from_bytes(font_data)
             .expect("Couldn't load font");
+        ui.fonts.insert(font);
+
         let widget_ids = Ids::new(ui.widget_id_generator());
 
         let image_map = Map::<Texture2d>::new();
