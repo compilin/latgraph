@@ -2,7 +2,7 @@
 use std::marker::PhantomData;
 use std::{cmp::min, convert::TryFrom, iter::Iterator, time::Instant};
 
-use log::{warn,debug};
+use log::{debug, warn};
 
 #[derive(Copy, Clone, Debug)]
 pub enum Ping {
@@ -36,7 +36,6 @@ impl RingBuffer {
     pub fn get_start_index(&self) -> usize {
         self.start_index
     }
-    
     pub fn get_end_index(&self) -> usize {
         self.start_index + self.data.len() - 1
     }
@@ -68,10 +67,7 @@ impl RingBuffer {
                 Ping::Sent(snd_time) => {
                     let lat = rcv_time.saturating_duration_since(snd_time).as_millis();
                     debug!("Received pong, latency: {}", lat);
-                    self.data[id_usize % self.capacity] = Ping::Received(
-                        snd_time,
-                        lat,
-                    );
+                    self.data[id_usize % self.capacity] = Ping::Received(snd_time, lat);
                 }
                 Ping::Received(_, _) => {
                     warn!("Received duplicate response");
@@ -111,7 +107,12 @@ impl RingBuffer {
     /// Translates "Public" index to index in the buffer
     fn buffer_index(&self, i: usize) -> usize {
         if i < self.start_index || i - self.start_index > self.data.len() {
-            panic!("Index out of range (index = {}, start_index = {}, len = {})", i, self.start_index, self.data.len());
+            panic!(
+                "Index out of range (index = {}, start_index = {}, len = {})",
+                i,
+                self.start_index,
+                self.data.len()
+            );
         }
         i % self.capacity
     }
@@ -185,7 +186,7 @@ impl Ping {
     pub fn sent_time(&self) -> Instant {
         match self {
             Ping::Sent(time) => *time,
-            Ping::Received(time, _) => *time
+            Ping::Received(time, _) => *time,
         }
     }
 }

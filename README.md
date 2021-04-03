@@ -1,12 +1,15 @@
-LatGraph - UDP latency real-time viewer
+![](src/resources/icon.png)
+LatGraph - network latency real-time viewer
 =======================================
 
-This software allows you to monitor in real time your network latency.
+This software allows you to monitor in real time your network latency using the UDP Echo protocol.
+
+![](sample_view.png)
 
 Usage
 --------
 
-First you'll your own remote UDP Echo server to (unsurprisingly, I'm not aware of any public one). If you have a linux machine available you can use xinetd. If you just want to try out the software there is a test server available, run this command to see its usage:
+First you'll your own remote UDP Echo server to test your latency to (unsurprisingly, I'm not aware of any public one). If you have a linux machine available you can use xinetd. If you just want to try out the software there is a test server available, run this command to see its usage:
 
     cargo run --features=test-server --bin test-echo-server -- --help
 

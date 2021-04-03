@@ -1,22 +1,21 @@
-use conrod_core::text::Font;
 use crate::{ringbuf::RingBuffer, widget::LatencyGraphWidget};
+use conrod_core::text::Font;
 use conrod_glium::Renderer;
 use std::{
+    io::Cursor,
     net::UdpSocket,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
+use winit::window::Icon;
 
 use conrod_core::{image::Map, widget_ids, Ui, UiBuilder};
 use glium::{
     self,
     glutin::{
         dpi::LogicalSize,
-        event::{
-            ElementState, Event, KeyboardInput, StartCause, VirtualKeyCode,
-            WindowEvent,
-        },
+        event::{ElementState, Event, KeyboardInput, StartCause, VirtualKeyCode, WindowEvent},
         event_loop::{ControlFlow, EventLoop, EventLoopProxy},
         window::WindowBuilder,
         ContextBuilder,
@@ -156,6 +155,8 @@ impl LatGraphApp {
                         }
                         prev_remote = settings.remote_host.clone();
                     }
+
+                    settings.running &= !settings.remote_host.is_empty();
                 }
             }
             debug!("SND: Stopping send thread");
@@ -186,18 +187,26 @@ impl LatGraphApp {
         const WIDTH: u32 = 800;
         const HEIGHT: u32 = 400;
         let font_data = include_bytes!("resources/WorkSans-Regular.ttf");
+        let app_icon_data = include_bytes!("resources/icon.png");
+        let app_icon =
+            image::io::Reader::with_format(Cursor::new(app_icon_data), image::ImageFormat::Png)
+                .decode()
+                .unwrap()
+                .to_rgba8();
 
         let event_loop = EventLoop::with_user_event();
         let window = WindowBuilder::new()
             .with_title("Latency Graph")
-            .with_inner_size(LogicalSize::new(WIDTH, HEIGHT));
-        let context = ContextBuilder::new().with_vsync(true).with_multisampling(4);
+            .with_inner_size(LogicalSize::new(WIDTH, HEIGHT))
+            .with_window_icon(Some(
+                Icon::from_rgba(app_icon.to_vec(), app_icon.width(), app_icon.height()).unwrap(),
+            ));
+        let context = ContextBuilder::new().with_vsync(true)/* .with_multisampling(4) */;
         let display =
             Display::new(window, context, &event_loop).expect("Couldn't instanciate display");
 
         let mut ui = UiBuilder::new([WIDTH as f64, HEIGHT as f64]).build();
-        let font = Font::from_bytes(font_data)
-            .expect("Couldn't load font");
+        let font = Font::from_bytes(font_data).expect("Couldn't load font");
         ui.fonts.insert(font);
 
         let widget_ids = Ids::new(ui.widget_id_generator());
@@ -207,7 +216,7 @@ impl LatGraphApp {
 
         (
             LatGraphApp {
-                ringbuf: RingBuffer::new(10000),
+                ringbuf: RingBuffer::new(1000),
                 settings: LatGraphSettings::default(),
                 settings_tx,
                 display,
@@ -231,13 +240,14 @@ impl LatGraphApp {
             .color(color::DARK_CHARCOAL)
             .set(ids.canvas, ui);
 
-        self.settings.zoom = LatencyGraphWidget::new(&self.ringbuf, &self.settings, self.is_mouse_over_window)
-            .color(color::LIGHT_BLUE)
-            .missing_color(color::rgba_bytes(192, 64, 32, 0.3))
-            .border_color(color::LIGHT_BLUE)
-            .wh_of(ids.canvas)
-            .middle_of(ids.canvas)
-            .set(ids.graph, ui);
+        self.settings.zoom =
+            LatencyGraphWidget::new(&self.ringbuf, &self.settings, self.is_mouse_over_window)
+                .color(color::LIGHT_BLUE)
+                .missing_color(color::rgba_bytes(192, 64, 32, 0.3))
+                .border_color(color::LIGHT_BLUE)
+                .wh_of(ids.canvas)
+                .middle_of(ids.canvas)
+                .set(ids.graph, ui);
 
         *needs_redraw = ui.has_changed();
     }

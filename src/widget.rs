@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use conrod_core::{
     builder_method,
-    color::{rgba_bytes, Color},
-    widget, widget_ids, Colorable, Positionable, Rect, Widget, WidgetCommon, WidgetStyle,
+    color::{self, Color},
+    widget, widget_ids, Colorable, Positionable, Rect, Sizeable, Widget, WidgetCommon, WidgetStyle,
 };
 use log::*;
 
@@ -25,7 +25,17 @@ pub struct LatencyGraphWidget<'a> {
 widget_ids!(
     struct Ids {
         border,
-        ticks[],
+        x_ticks[],
+        x_tick_label,
+        y_ticks[],
+        y_tick_label,
+        y_min_tick,
+        y_min_label,
+        y_max_tick,
+        y_max_label,
+        y_avg_tick,
+        y_avg_label,
+        y_minmax_bar,
         bars[],
     }
 );
@@ -33,9 +43,17 @@ widget_ids!(
 const ZOOM_BASE: f64 = 1.2;
 const ZOOM_DEFAULT: u16 = 8;
 const ZOOM_MAX: f64 = 20.;
+// Min,max distance between horizontal ticks, in pixels
+const TICK_MIN_STEP: u128 = 75;
+const TICK_MAX_STEP: u128 = 200;
+const TICK_STEPS: [u128; 12] = [
+    // Allowed values for the distance in milliseconds between ticks
+    100, 250, 500, 1000, 2500, 5000, 10_000, 20_000, 30_000, 60_000, 120_000, 240_000,
+];
 
 pub struct State {
     ids: Ids,
+    tick_step: usize, // Index of the current tick step in teh TICK_STEPS array
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -83,6 +101,7 @@ impl Widget for LatencyGraphWidget<'_> {
     fn init_state(&self, id_gen: widget::id::Generator<'_>) -> <Self as Widget>::State {
         State {
             ids: Ids::new(id_gen),
+            tick_step: 0,
         }
     }
     fn style(&self) -> <Self as Widget>::Style {
@@ -98,10 +117,17 @@ impl Widget for LatencyGraphWidget<'_> {
             ..
         } = args;
 
+        let graph_area = widget_area
+            .pad_top(10.)
+            .pad_left(10.)
+            .pad_bottom(25.)
+            .pad_right(50.);
+
+        let inputs = ui.widget_input(id);
         let mut zoom = self.settings.zoom;
         {
             let mut horizontal = zoom.horizontal as f64;
-            for scroll in ui.widget_input(id).scrolls() {
+            for scroll in inputs.scrolls() {
                 if scroll.y != 0. {
                     horizontal += f64::signum(scroll.y);
                 }
@@ -109,22 +135,15 @@ impl Widget for LatencyGraphWidget<'_> {
             zoom.horizontal = horizontal.clamp(0., ZOOM_MAX) as u16;
         }
 
-        let graph_area = widget_area.pad_right(50.).pad_bottom(50.);
-
-        /* WIDGET BORDER */
-        widget::Rectangle::outline_styled(
-            graph_area.dim(),
-            widget::line::Style::solid().thickness(self.style.border(ui.theme())),
-        )
-        .xy(graph_area.xy())
-        .color(self.style.border_color(ui.theme()))
-        .parent(id)
-        .graphics_for(id)
-        .set(state.ids.border, ui);
+        if let Some(mouse) = inputs.mouse() {
+            if self.is_mouse_over_window && graph_area.is_over(mouse.rel_xy()) {
+                // TODO
+            }
+        }
 
         /* PING BARS */
         let bar_color = self.style.color(ui.theme()).alpha(0.5);
-        let missing_color = rgba_bytes(192, 64, 32, 0.3);
+        let missing_color = color::rgba_bytes(192, 64, 32, 0.3);
         let bar_width = f64::powf(ZOOM_BASE, zoom.horizontal as f64);
         let now = Instant::now();
         let x_step = bar_width + 1.;
@@ -133,23 +152,32 @@ impl Widget for LatencyGraphWidget<'_> {
             now.saturating_duration_since(self.buffer[self.buffer.get_end_index()].sent_time())
                 .as_micros() as f64
                 / self.settings.delay.as_micros() as f64
-            
         } else {
             1.
         };
         let x_offset = bar_width * x_offset.clamp(0., 1.);
         let nb_points = usize::min(self.buffer.len(), (graph_area.w() / x_step) as usize + 2);
+        let mut min_lat = u128::MAX;
+        let mut max_lat = 0;
+        let mut avg_lat = 0;
+        let mut nb_lat = 0;
+
+        let lat_to_y = |lat| graph_area.bottom() + lat as f64;
 
         if state.ids.bars.len() < nb_points {
-            let mut id_gen = ui.widget_id_generator();
-            state.update(|state| state.ids.bars.resize(nb_points, &mut id_gen));
+            state.update(|state| {
+                state
+                    .ids
+                    .bars
+                    .resize(nb_points, &mut ui.widget_id_generator())
+            });
         }
         for (i, ping) in self.buffer.iter_rev().take(nb_points).enumerate() {
             let x = graph_area.right() - (i as f64 * x_step + x_offset);
 
             match ping {
                 Ping::Received(_, lat) => {
-                    let y = graph_area.bottom() + lat as f64;
+                    let y = lat_to_y(lat);
                     if let Some(rct) =
                         Rect::from_corners([x, graph_area.bottom()], [x + bar_width, y])
                             .overlap(graph_area)
@@ -161,6 +189,14 @@ impl Widget for LatencyGraphWidget<'_> {
                             .graphics_for(id)
                             .set(state.ids.bars[i], ui);
                     }
+                    if lat < min_lat {
+                        min_lat = lat;
+                    }
+                    if lat > max_lat {
+                        max_lat = lat;
+                    }
+                    avg_lat += lat;
+                    nb_lat += 1;
                 }
                 Ping::Sent(time) => {
                     if let Some(rct) = Rect::from_corners(
@@ -187,6 +223,139 @@ impl Widget for LatencyGraphWidget<'_> {
             }
         }
 
+        /* WIDGET BORDER */
+        let border_color = self.style.border_color(ui.theme());
+        widget::Rectangle::outline_styled(
+            graph_area.dim(),
+            widget::line::Style::solid().thickness(self.style.border(ui.theme())),
+        )
+        .xy(graph_area.xy())
+        .color(border_color)
+        .parent(id)
+        .graphics_for(id)
+        .set(state.ids.border, ui);
+
+        /* X TICKS */
+        let tick_step = update_ticks_step(state.tick_step, x_step, self.settings.delay);
+        if tick_step != state.tick_step {
+            state.update(|state| state.tick_step = tick_step);
+        }
+
+        let tick_dist =
+            TICK_STEPS[tick_step] as f64 * x_step / self.settings.delay.as_millis() as f64;
+        let x_tick_nb = (graph_area.w() / tick_dist).ceil() as usize;
+        if x_tick_nb > state.ids.x_ticks.len() {
+            state.update(|state| {
+                state
+                    .ids
+                    .x_ticks
+                    .resize(x_tick_nb, &mut ui.widget_id_generator());
+            });
+        }
+        for i in 0..x_tick_nb {
+            let x = graph_area.right() - i as f64 * tick_dist;
+
+            widget::Line::abs([x, graph_area.bottom()], [x, graph_area.bottom() - 10.])
+                .color(border_color)
+                .parent(id)
+                .graphics_for(id)
+                .set(state.ids.x_ticks[i], ui);
+
+            if i == x_tick_nb - 1 {
+                let dur = Duration::from_millis(TICK_STEPS[tick_step] as u64 * i as u64);
+                widget::Text::new(&format!("{:?}", dur))
+                    .xy([x, graph_area.bottom() - 20.])
+                    .wh([20., 20.])
+                    .center_justify()
+                    .font_size(8)
+                    .color(border_color)
+                    .parent(id)
+                    .graphics_for(id)
+                    .set(state.ids.x_tick_label, ui);
+            }
+        }
+
+        /* Y TICKS */
+        if nb_lat > 0 {
+            const TICK_LENGTH: f64 = 10.;
+
+            let mut set_tick = |lat: u128, rect: Rect, y: f64, tick_id, label_id| {
+                widget::Line::abs(
+                    [graph_area.right(), y],
+                    [graph_area.right() + TICK_LENGTH, y],
+                )
+                .color(border_color)
+                .parent(id)
+                .graphics_for(id)
+                .set(tick_id, ui);
+
+                widget::Text::new(&format_latency(lat))
+                    .xy(rect.xy())
+                    .wh(rect.dim())
+                    .left_justify()
+                    .font_size(8)
+                    .color(border_color)
+                    .parent(id)
+                    .graphics_for(id)
+                    .set(label_id, ui);
+            };
+
+            let avg_lat = avg_lat / nb_lat;
+            let avg_y = lat_to_y(avg_lat);
+            let avg_rect =
+                Rect::from_xy_dim([graph_area.right() + TICK_LENGTH + 22., avg_y], [40., 10.]);
+            if avg_y < graph_area.top() {
+                set_tick(
+                    avg_lat,
+                    avg_rect,
+                    avg_y,
+                    state.ids.y_avg_tick,
+                    state.ids.y_avg_label,
+                );
+            }
+
+            let min_y = lat_to_y(min_lat);
+            let min_rect = Rect::from_xy_dim(
+                [avg_rect.x(), f64::min(avg_y - avg_rect.h(), min_y)],
+                avg_rect.dim(),
+            );
+            set_tick(
+                min_lat,
+                min_rect,
+                min_y,
+                state.ids.y_min_tick,
+                state.ids.y_min_label,
+            );
+
+            let max_y = lat_to_y(max_lat);
+            if max_y <= graph_area.top() {
+                let max_rect = Rect::from_xy_dim(
+                    [avg_rect.x(), f64::max(avg_y + avg_rect.h(), max_y)],
+                    avg_rect.dim(),
+                );
+
+                set_tick(
+                    max_lat,
+                    max_rect,
+                    max_y,
+                    state.ids.y_max_tick,
+                    state.ids.y_max_label,
+                );
+            }
+
+            let minmax_bar_color = border_color.alpha(0.15);
+            let minmax_rect = Rect::from_corners(
+                [graph_area.right(), min_y],
+                [graph_area.right() + TICK_LENGTH, f64::min(max_y, graph_area.top())],
+            );
+
+            widget::Rectangle::fill(minmax_rect.dim())
+                .xy(minmax_rect.xy())
+                .color(minmax_bar_color)
+                .parent(id)
+                .graphics_for(id)
+                .set(state.ids.y_minmax_bar, ui);
+        }
         trace!(
             "Updating ringbuf over area {:?} widget with {} points, zoom: {:?}",
             graph_area,
@@ -195,6 +364,48 @@ impl Widget for LatencyGraphWidget<'_> {
         );
 
         zoom
+    }
+}
+
+fn update_ticks_step(old_step: usize, step_width: f64, delay: Duration) -> usize {
+    let delay = delay.as_millis();
+    let step_width = step_width as u128;
+    let mut step = old_step;
+    // Find the closest tick step that results in a distance within the given range
+    while TICK_STEPS[step] * step_width / delay > TICK_MAX_STEP {
+        if step > 0 {
+            step -= 1;
+        } else {
+            break;
+        }
+    }
+    while TICK_STEPS[step] * step_width / delay < TICK_MIN_STEP {
+        if step < TICK_STEPS.len() - 1 {
+            step += 1;
+        } else {
+            break;
+        }
+    }
+    if old_step != step {
+        debug!(
+            "Updating tick_step: {:?} ({}) => {:?} ({}), pixel dist: {}",
+            Duration::from_millis(TICK_STEPS[old_step] as u64),
+            old_step,
+            Duration::from_millis(TICK_STEPS[step] as u64),
+            step,
+            TICK_STEPS[step] * step_width / delay
+        );
+    }
+    step
+}
+
+fn format_latency(lat: u128) -> String {
+    if lat < 1000 {
+        lat.to_string() + "ms"
+    } else if lat < 60000 {
+        format!("{:.2}s", lat as f32 / 1000.)
+    } else {
+        String::from(">1m")
     }
 }
 

@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 use std::time::Duration;
 
 use clap::{App,Arg};
@@ -33,7 +34,7 @@ fn main() {
     let settings = app::LatGraphSettings {
         remote_host: String::from(remote),
         delay: Duration::from_millis(rate),
-        running: running,
+        running: running && !remote.is_empty(),
         zoom: Default::default(),
     };
     info!("Starting app with settings {:?}", settings);
