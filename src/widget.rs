@@ -130,8 +130,7 @@ impl Widget for LatencyGraphWidget<'_> {
         let x_step = bar_width + 1.;
         let x_offset = if self.buffer.len() > 0 && self.settings.running {
             // Offset as a function of time since the last packet was sent
-            now
-                .saturating_duration_since(self.buffer[self.buffer.len() - 1].sent_time())
+            now.saturating_duration_since(self.buffer[self.buffer.get_end_index()].sent_time())
                 .as_micros() as f64
                 / self.settings.delay.as_micros() as f64
             

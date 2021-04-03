@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::marker::PhantomData;
 use std::{cmp::min, convert::TryFrom, iter::Iterator, time::Instant};
 
@@ -23,7 +24,6 @@ pub struct RingBufferIter<'a, T> {
     iter_type: PhantomData<T>,
 }
 
-#[allow(dead_code)]
 impl RingBuffer {
     pub fn new(size: usize) -> RingBuffer {
         RingBuffer {
@@ -35,6 +35,10 @@ impl RingBuffer {
 
     pub fn get_start_index(&self) -> usize {
         self.start_index
+    }
+    
+    pub fn get_end_index(&self) -> usize {
+        self.start_index + self.data.len() - 1
     }
 
     pub fn len(&self) -> usize {
@@ -107,7 +111,7 @@ impl RingBuffer {
     /// Translates "Public" index to index in the buffer
     fn buffer_index(&self, i: usize) -> usize {
         if i < self.start_index || i - self.start_index > self.data.len() {
-            panic!("Index out of range");
+            panic!("Index out of range (index = {}, start_index = {}, len = {})", i, self.start_index, self.data.len());
         }
         i % self.capacity
     }
