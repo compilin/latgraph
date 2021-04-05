@@ -41,7 +41,7 @@ widget_ids!(
 );
 
 const ZOOM_BASE: f64 = 1.2;
-const ZOOM_DEFAULT: u16 = 8;
+pub const ZOOM_DEFAULT: u16 = 8;
 const ZOOM_MAX: f64 = 20.;
 // Min,max distance between horizontal ticks, in pixels
 const TICK_MIN_STEP: u128 = 75;
@@ -56,11 +56,7 @@ pub struct State {
     tick_step: usize, // Index of the current tick step in teh TICK_STEPS array
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Zoom {
-    vertical: u16,
-    horizontal: u16,
-}
+type Zoom = (u16, u16);
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, WidgetStyle)]
 pub struct Style {
@@ -124,16 +120,17 @@ impl Widget for LatencyGraphWidget<'_> {
             .pad_right(50.);
 
         let inputs = ui.widget_input(id);
-        let mut zoom = self.settings.zoom;
-        {
-            let mut horizontal = zoom.horizontal as f64;
+        let zoom = {
+            let mut horizontal = self.settings.zoom.0 as f64;
+
             for scroll in inputs.scrolls() {
                 if scroll.y != 0. {
                     horizontal += f64::signum(scroll.y);
                 }
             }
-            zoom.horizontal = horizontal.clamp(0., ZOOM_MAX) as u16;
-        }
+            
+            (horizontal.clamp(0., ZOOM_MAX) as u16, self.settings.zoom.1)
+        };
 
         if let Some(mouse) = inputs.mouse() {
             if self.is_mouse_over_window && graph_area.is_over(mouse.rel_xy()) {
@@ -144,7 +141,7 @@ impl Widget for LatencyGraphWidget<'_> {
         /* PING BARS */
         let bar_color = self.style.color(ui.theme()).alpha(0.5);
         let missing_color = color::rgba_bytes(192, 64, 32, 0.3);
-        let bar_width = f64::powf(ZOOM_BASE, zoom.horizontal as f64);
+        let bar_width = f64::powf(ZOOM_BASE, zoom.0 as f64);
         let now = Instant::now();
         let x_step = bar_width + 1.;
         let x_offset = if self.buffer.len() > 0 && self.settings.running {
@@ -416,13 +413,4 @@ impl Colorable for LatencyGraphWidget<'_> {
 impl Borderable for LatencyGraphWidget<'_> {
     builder_method!(border { style.border = Some(f64) });
     builder_method!(border_color { style.border_color = Some(Color) });
-}
-
-impl Default for Zoom {
-    fn default() -> Self {
-        Zoom {
-            horizontal: ZOOM_DEFAULT,
-            vertical: ZOOM_DEFAULT,
-        }
-    }
 }

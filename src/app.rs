@@ -2,8 +2,10 @@ use crate::{ringbuf::RingBuffer, widget::LatencyGraphWidget};
 use conrod_core::text::Font;
 use conrod_glium::Renderer;
 use std::{
+    hash::Hash,
     io::Cursor,
     net::UdpSocket,
+    path::PathBuf,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -28,6 +30,7 @@ pub struct LatGraphApp {
     ringbuf: RingBuffer,
     settings: LatGraphSettings,
     settings_tx: mpsc::Sender<LatGraphSettings>,
+    config_path: Option<PathBuf>,
     display: Display,
     ui: Ui,
     widget_ids: Ids,
@@ -36,12 +39,16 @@ pub struct LatGraphApp {
     is_mouse_over_window: bool,
 }
 
-#[derive(Clone, Debug)]
+#[cfg_attr(
+    feature = "config",
+    derive(serde_derive::Serialize, serde_derive::Deserialize)
+)]
+#[derive(Clone, Debug, Hash)]
 pub struct LatGraphSettings {
     pub running: bool,
     pub remote_host: String,
+    pub zoom: (u16, u16),
     pub delay: Duration,
-    pub zoom: crate::widget::Zoom,
 }
 
 widget_ids! {
@@ -66,10 +73,11 @@ enum AppError {
 }
 
 impl LatGraphApp {
-    pub fn start(settings: LatGraphSettings) {
+    pub fn start(settings: LatGraphSettings, config_path: Option<PathBuf>) {
         let (settings_tx, settings_rx) = mpsc::channel();
 
         let (mut app, event_loop) = LatGraphApp::init_ui(settings_tx);
+        app.config_path = config_path;
 
         LatGraphApp::init_network(settings_rx, event_loop.create_proxy());
 
@@ -78,10 +86,6 @@ impl LatGraphApp {
         info!("Starting event loop");
         app.run_loop(event_loop);
     }
-
-    // fn load_settings() -> LatGraphSettings {
-    //     LatGraphSettings::default()
-    // }
 
     fn init_network(
         settings_rx: mpsc::Receiver<LatGraphSettings>,
@@ -219,6 +223,7 @@ impl LatGraphApp {
                 ringbuf: RingBuffer::new(1000),
                 settings: LatGraphSettings::default(),
                 settings_tx,
+                config_path: None,
                 display,
                 ui,
                 widget_ids,
@@ -404,13 +409,39 @@ impl LatGraphApp {
     }
 }
 
+impl LatGraphSettings {
+    #[cfg(not(feature = "config"))]
+    pub fn save(&self, _: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    #[cfg(feature = "config")]
+    pub fn save(&self, path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+
+        debug!("Saving config to file {:?}", path);
+        let ser = toml::to_string_pretty(self)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+
+        file.write(ser.as_bytes())?;
+        file.flush()?;
+
+        Ok(())
+    }
+}
+
 impl Default for LatGraphSettings {
     fn default() -> Self {
         LatGraphSettings {
             remote_host: String::new(),
             delay: Duration::from_millis(100),
             running: false,
-            zoom: Default::default(),
+            zoom: (crate::widget::ZOOM_DEFAULT, crate::widget::ZOOM_DEFAULT),
         }
     }
 }
