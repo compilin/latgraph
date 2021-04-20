@@ -125,7 +125,7 @@ impl Widget for LatencyGraphWidget<'_> {
 
             for scroll in inputs.scrolls() {
                 if scroll.y != 0. {
-                    horizontal += f64::signum(scroll.y);
+                    horizontal -= f64::signum(scroll.y);
                 }
             }
             
