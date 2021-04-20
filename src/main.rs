@@ -109,8 +109,7 @@ fn parse_config(matches: &ArgMatches) -> (Option<PathBuf>, app::LatGraphSettings
     } else {
         if let Some(mut path) = dirs::config_dir() {
             path.push("latgraph");
-            path.set_file_name("config");
-            path.set_extension("toml");
+            path.push("config.toml");
             info!("Using config file path: {:?}", path);
             Some(path)
         } else {
@@ -139,8 +138,11 @@ fn parse_config(matches: &ArgMatches) -> (Option<PathBuf>, app::LatGraphSettings
 fn print_panic(info: &std::panic::PanicInfo) -> std::io::Result<()> {
     if let Some(mut path) = dirs::config_dir() {
         path.push("latgraph");
-        path.set_file_name("error");
-        path.set_extension("log");
+        path.push("error.log");
+        let parent = path.parent().unwrap();
+        if !parent.is_dir() {
+            std::fs::create_dir_all(parent)?;
+        }
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)

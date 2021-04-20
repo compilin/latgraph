@@ -25,6 +25,7 @@ use glium::{
     Display, Surface, Texture2d,
 };
 use log::*;
+use thread_priority::ThreadPriority;
 
 pub struct LatGraphApp {
     ringbuf: RingBuffer,
@@ -104,17 +105,20 @@ impl LatGraphApp {
             let mut new_settings = false;
             let mut next_ping = Instant::now();
             let mut ping_id = 0u64;
+            if let Err(e) = ThreadPriority::Max.set_for_current() {
+                warn!("Couldn't set thread priority : {:?}", e);
+            }
 
             loop {
                 if settings.running {
                     debug!("SND: Sending ping");
                     let now = Instant::now();
+                    if let Err(_) = event_tx.send_event(AppEvent::Ping(now)) {
+                        break;
+                    }
                     if let Err(e) = socket_tx.send(&ping_id.to_ne_bytes()) {
                         error!("SND: Couldn't send ping ({})", e);
                         std::process::exit(1); // Kill the process instead of panicking only this thread
-                    }
-                    if let Err(_) = event_tx.send_event(AppEvent::Ping(now)) {
-                        break;
                     }
                     ping_id += 1;
                     next_ping = next_ping + settings.delay;
@@ -170,6 +174,9 @@ impl LatGraphApp {
         thread::spawn(move || {
             let event_tx = event_tx_rcv;
             let mut buf = [0u8; 8];
+            if let Err(e) = ThreadPriority::Max.set_for_current() {
+                warn!("Couldn't set thread priority : {:?}", e);
+            }
 
             loop {
                 match socket_rx.recv(&mut buf) {
@@ -422,6 +429,11 @@ impl LatGraphSettings {
 
         debug!("Saving config to file {:?}", path);
         let ser = toml::to_string_pretty(self)?;
+        
+        let parent = path.parent().unwrap();
+        if !parent.is_dir() {
+            std::fs::create_dir_all(parent)?;
+        }
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
