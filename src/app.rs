@@ -1,6 +1,4 @@
 use crate::{ringbuf::RingBuffer, widget::LatencyGraphWidget};
-use conrod_core::text::Font;
-use conrod_glium::Renderer;
 use std::{
     hash::Hash,
     io::Cursor,
@@ -10,9 +8,12 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use winit::window::Icon;
 
-use conrod_core::{image::Map, widget_ids, Ui, UiBuilder};
+use conrod_core::{
+    color, image::Map, text::Font, widget, widget_ids, Borderable, Colorable, Positionable,
+    Sizeable, Ui, UiBuilder, Widget,
+};
+use conrod_glium::Renderer;
 use glium::{
     self,
     glutin::{
@@ -26,6 +27,7 @@ use glium::{
 };
 use log::*;
 use thread_priority::ThreadPriority;
+use winit::window::Icon;
 
 pub struct LatGraphApp {
     ringbuf: RingBuffer,
@@ -216,7 +218,7 @@ impl LatGraphApp {
         let display =
             Display::new(window, context, &event_loop).expect("Couldn't instanciate display");
 
-        let mut ui = UiBuilder::new([WIDTH as f64, HEIGHT as f64]).build();
+        let mut ui = UiBuilder::new([(WIDTH + 1) as f64, (HEIGHT + 1) as f64]).build();
         let font = Font::from_bytes(font_data).expect("Couldn't load font");
         ui.fonts.insert(font);
 
@@ -243,13 +245,12 @@ impl LatGraphApp {
     }
 
     fn set_ui(&mut self, needs_redraw: &mut bool) {
-        use conrod_core::{color, widget, Borderable, Colorable, Positionable, Sizeable, Widget};
-
         let ui = &mut self.ui.set_widgets();
         let ids = &self.widget_ids;
 
         widget::Canvas::new()
             .color(color::DARK_CHARCOAL)
+            .border(0.)
             .set(ids.canvas, ui);
 
         self.settings.zoom =
@@ -326,7 +327,7 @@ impl LatGraphApp {
         self.renderer
             .fill(&self.display, primitives, &self.image_map);
         let mut target = self.display.draw();
-        target.clear_color(0.0, 0.0, 0.0, 1.0);
+        target.clear_color(0., 0., 0., 1.0);
         self.renderer
             .draw(&self.display, &mut target, &self.image_map)
             .unwrap();
@@ -429,7 +430,6 @@ impl LatGraphSettings {
 
         debug!("Saving config to file {:?}", path);
         let ser = toml::to_string_pretty(self)?;
-        
         let parent = path.parent().unwrap();
         if !parent.is_dir() {
             std::fs::create_dir_all(parent)?;

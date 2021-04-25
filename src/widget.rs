@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use conrod_core::{
     builder_method,
     color::{self, Color},
+    position::{range::Range, Padding},
     widget, widget_ids, Colorable, Positionable, Rect, Sizeable, Widget, WidgetCommon, WidgetStyle,
 };
 use log::*;
@@ -25,6 +26,7 @@ pub struct LatencyGraphWidget<'a> {
 widget_ids!(
     struct Ids {
         border,
+        hover_highlight,
         x_ticks[],
         x_tick_label,
         y_ticks[],
@@ -50,6 +52,17 @@ const TICK_STEPS: [u128; 12] = [
     // Allowed values for the distance in milliseconds between ticks
     100, 250, 500, 1000, 2500, 5000, 10_000, 20_000, 30_000, 60_000, 120_000, 240_000,
 ];
+
+const GRAPH_AREA_PADDING: Padding = Padding {
+    x: Range {
+        start: 10., // left
+        end: 50.,   // right
+    },
+    y: Range {
+        start: 25., // bottom
+        end: 10.,   // top
+    },
+};
 
 pub struct State {
     ids: Ids,
@@ -113,35 +126,65 @@ impl Widget for LatencyGraphWidget<'_> {
             ..
         } = args;
 
-        let graph_area = widget_area
-            .pad_top(10.)
-            .pad_left(10.)
-            .pad_bottom(25.)
-            .pad_right(50.);
+        let graph_area = widget_area.padding(GRAPH_AREA_PADDING);
+        let x_axis_area = Rect::from_corners(graph_area.bottom_right(), widget_area.bottom_left());
+        let y_axis_area = Rect::from_corners(graph_area.bottom_right(), widget_area.top_right());
+
+        let border_color = self.style.border_color(ui.theme());
+        let inputs = ui.widget_input(id);
+        let mut is_over_x = false;
+        let mut is_over_y = false;
+        if let Some(mouse) = inputs.mouse() {
+            let highlight_rect = if self.is_mouse_over_window && x_axis_area.is_over(mouse.rel_xy())
+            {
+                is_over_x = true;
+                Some(x_axis_area)
+            } else if self.is_mouse_over_window && y_axis_area.is_over(mouse.rel_xy()) {
+                is_over_y = true;
+                Some(y_axis_area)
+            } else {
+                None
+            };
+            if let Some(rect) = highlight_rect {
+                let minmax_bar_color = border_color.alpha(0.15);
+
+                widget::Rectangle::fill(rect.dim())
+                    .xy(rect.xy())
+                    .color(minmax_bar_color)
+                    .parent(id)
+                    .graphics_for(id)
+                    .set(state.ids.hover_highlight, ui);
+            }
+        }
 
         let inputs = ui.widget_input(id);
-        let zoom = {
-            let mut horizontal = self.settings.zoom.0 as f64;
-
-            for scroll in inputs.scrolls() {
+        let mut zoom = self.settings.zoom;
+        let delta_zoom = inputs
+            .scrolls()
+            .map(|scroll| {
                 if scroll.y != 0. {
-                    horizontal -= f64::signum(scroll.y);
+                    -f64::signum(scroll.y)
+                } else {
+                    0.
                 }
-            }
-            
-            (horizontal.clamp(0., ZOOM_MAX) as u16, self.settings.zoom.1)
-        };
-
-        if let Some(mouse) = inputs.mouse() {
-            if self.is_mouse_over_window && graph_area.is_over(mouse.rel_xy()) {
-                // TODO
+            })
+            .fold(0., |acc, val| acc + val);
+        if delta_zoom != 0. {
+            if is_over_x {
+                let old_zoom = zoom.0;
+                zoom.0 = (zoom.0 as f64 + delta_zoom).clamp(0., ZOOM_MAX) as u16;
+                debug!("Adjusting horizontal zoom {} -> {}", old_zoom, zoom.0);
+            } else if is_over_y {
+                let old_zoom = zoom.1;
+                zoom.1 = (zoom.1 as f64 + delta_zoom).clamp(0., ZOOM_MAX) as u16;
+                debug!("Adjusting vertical zoom {} -> {}", old_zoom, zoom.1);
             }
         }
 
         /* PING BARS */
         let bar_color = self.style.color(ui.theme()).alpha(0.5);
         let missing_color = color::rgba_bytes(192, 64, 32, 0.3);
-        let bar_width = f64::powf(ZOOM_BASE, zoom.0 as f64);
+        let bar_width = f64::powi(ZOOM_BASE, zoom.0 as i32);
         let now = Instant::now();
         let x_step = bar_width + 1.;
         let x_offset = if self.buffer.len() > 0 && self.settings.running {
@@ -159,7 +202,7 @@ impl Widget for LatencyGraphWidget<'_> {
         let mut avg_lat = 0;
         let mut nb_lat = 0;
 
-        let lat_to_y = |lat| graph_area.bottom() + lat as f64;
+        let lat_to_y = |lat| graph_area.bottom() + f64::sqrt(lat as f64) * f64::powi(ZOOM_BASE, zoom.1 as i32) * 2.;
 
         if state.ids.bars.len() < nb_points {
             state.update(|state| {
@@ -221,7 +264,6 @@ impl Widget for LatencyGraphWidget<'_> {
         }
 
         /* WIDGET BORDER */
-        let border_color = self.style.border_color(ui.theme());
         widget::Rectangle::outline_styled(
             graph_area.dim(),
             widget::line::Style::solid().thickness(self.style.border(ui.theme())),
@@ -343,7 +385,10 @@ impl Widget for LatencyGraphWidget<'_> {
             let minmax_bar_color = border_color.alpha(0.15);
             let minmax_rect = Rect::from_corners(
                 [graph_area.right(), min_y],
-                [graph_area.right() + TICK_LENGTH, f64::min(max_y, graph_area.top())],
+                [
+                    graph_area.right() + TICK_LENGTH,
+                    f64::min(max_y, graph_area.top()),
+                ],
             );
 
             widget::Rectangle::fill(minmax_rect.dim())

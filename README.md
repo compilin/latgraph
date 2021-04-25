@@ -21,7 +21,7 @@ Where -r is the remote address and port of the echo server and -t is the delay b
 
 If compiled with the `config` feature (enabled by default, see below), settings will be saved and you can directly start the executable next time.
 
-Features
+Crate features
 --------
 
 Beside the test-server, two other features are available:
