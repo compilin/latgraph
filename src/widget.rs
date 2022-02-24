@@ -127,8 +127,8 @@ impl Widget for LatencyGraphWidget<'_> {
         } = args;
 
         let graph_area = widget_area.padding(GRAPH_AREA_PADDING);
-        let x_axis_area = Rect::from_corners(graph_area.bottom_right(), widget_area.bottom_left());
-        let y_axis_area = Rect::from_corners(graph_area.bottom_right(), widget_area.top_right());
+        let x_axis_area = Rect::from_corners(graph_area.bottom_right(), widget_area.bottom_left()).pad_left(GRAPH_AREA_PADDING.x.start);
+        let y_axis_area = Rect::from_corners(graph_area.bottom_right(), widget_area.top_right()).pad_top(GRAPH_AREA_PADDING.y.end);
 
         let border_color = self.style.border_color(ui.theme());
         let inputs = ui.widget_input(id);
@@ -366,21 +366,19 @@ impl Widget for LatencyGraphWidget<'_> {
                 state.ids.y_min_label,
             );
 
-            let max_y = lat_to_y(max_lat);
-            if max_y <= graph_area.top() {
-                let max_rect = Rect::from_xy_dim(
-                    [avg_rect.x(), f64::max(avg_y + avg_rect.h(), max_y)],
-                    avg_rect.dim(),
-                );
+            let max_y = f64::min(lat_to_y(max_lat), graph_area.top());
+            let max_rect = Rect::from_xy_dim(
+                [avg_rect.x(), f64::max(avg_y + avg_rect.h(), max_y)],
+                avg_rect.dim(),
+            );
 
-                set_tick(
-                    max_lat,
-                    max_rect,
-                    max_y,
-                    state.ids.y_max_tick,
-                    state.ids.y_max_label,
-                );
-            }
+            set_tick(
+                max_lat,
+                max_rect,
+                max_y,
+                state.ids.y_max_tick,
+                state.ids.y_max_label,
+            );
 
             let minmax_bar_color = border_color.alpha(0.15);
             let minmax_rect = Rect::from_corners(

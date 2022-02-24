@@ -103,8 +103,9 @@ impl LatGraphApp {
         thread::spawn(move || {
             let event_tx = event_tx_snd;
             let mut settings = LatGraphSettings::default();
-            let mut prev_remote = String::new();
             let mut new_settings = false;
+            let mut new_remote = false;
+            let mut valid_remote = false; // Whether we managed to ever send a ping to the current remote
             let mut next_ping = Instant::now();
             let mut ping_id = 0u64;
             if let Err(e) = ThreadPriority::Max.set_for_current() {
@@ -119,8 +120,31 @@ impl LatGraphApp {
                         break;
                     }
                     if let Err(e) = socket_tx.send(&ping_id.to_ne_bytes()) {
-                        error!("SND: Couldn't send ping ({})", e);
-                        std::process::exit(1); // Kill the process instead of panicking only this thread
+                        warn!("SND: Couldn't send ping ({}), attempting reconnect", e);
+
+                        let mut addr = settings.remote_host.clone();
+                        if !addr.contains(":") {
+                            addr += ":7";
+                        }
+                        if let Err(e) = socket_tx
+                            .connect(addr)
+                            .and_then(|_| socket_tx.send(&ping_id.to_ne_bytes()))
+                        {
+                            next_ping += Duration::from_secs(3);
+                            if valid_remote { // If we could send a ping to the host at least once, keep trying again
+                                error!("SND: Reconnect failed ({}), waiting 3s", e);
+                            } else { // Otherwise return a host resolution error
+                                error!("SND: Reconnect failed ({}), giving up", e);
+                                if let Err(_) =
+                                    event_tx.send_event(AppEvent::Error(AppError::HostResolution))
+                                {
+                                    break;
+                                }
+                                settings.running = false;
+                            }
+                        }
+                    } else {
+                        valid_remote = true;
                     }
                     ping_id += 1;
                     next_ping = next_ping + settings.delay;
@@ -137,7 +161,10 @@ impl LatGraphApp {
                     }
                 } else {
                     match settings_rx.recv() {
-                        Ok(set) => settings = set,
+                        Ok(set) => {
+                            new_remote = set.remote_host != settings.remote_host;
+                            settings = set;
+                        }
                         Err(_) => break, // Main thread is probably shutting down, just exit
                     }
                     new_settings = true;
@@ -148,7 +175,8 @@ impl LatGraphApp {
                     new_settings = false;
 
                     // If remote host settings have changed
-                    if prev_remote != settings.remote_host && !settings.remote_host.is_empty() {
+                    if new_remote && !settings.remote_host.is_empty() {
+                        valid_remote = false;
                         info!("SND: Connecting to new host");
                         let mut addr = settings.remote_host.clone();
                         if !addr.contains(":") {
@@ -163,7 +191,7 @@ impl LatGraphApp {
                             }
                             settings.running = false;
                         }
-                        prev_remote = settings.remote_host.clone();
+                        new_remote = false;
                     }
 
                     settings.running &= !settings.remote_host.is_empty();
@@ -287,7 +315,8 @@ impl LatGraphApp {
                         self.ringbuf.received(*id, *time);
                     }
                     AppEvent::Error(AppError::HostResolution) => {
-                        todo!();
+                        error!("Received a Host Resolution error, exiting");
+                        *should_exit = true;
                     }
                 }
                 *should_update_ui = true;
